@@ -11,7 +11,7 @@ Weights that MyFitnessPal itself sent to Garmin Connect are ignored, so the two 
 
 Garmin Connect is read with the official Personal API (an API key). MyFitnessPal has no public
 API: its own web app's endpoints are used with the session cookie of a logged-in browser, which
-MyFitnessPal renews on every visit (the renewed one is saved, see MFP_SESSION_FILE).
+MyFitnessPal renews on every visit (the renewed one is saved in .mfp-session.json).
 """
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ from pathlib import Path
 import requests
 
 ROOT = Path(__file__).resolve().parent
+SESSION_FILE = ROOT / ".mfp-session.json"
+TOKEN_FILE = ROOT / ".garmin-token.json"
 
 GARMIN_API = "https://personal.connectapi.garmin.com"
 GARMIN_TOKEN_PATH = "/personalapitoken-service/personal-api/personal-api-key/token"
@@ -55,15 +57,11 @@ def load_env(path: Path) -> None:
             os.environ.setdefault(key.strip(), value.strip().strip("'\""))
 
 
-def setting_path(name: str, default: Path) -> Path:
-    return Path(os.path.expanduser(os.environ.get(name) or str(default)))
-
-
 # ─── Garmin Connect ─────────────────────────────────────────────────────────
 
 class Garmin:
     """Read-only client of the Garmin Connect Personal API. The bearer token is saved and reused
-    for 23 hours (the file can be shared with another tool using the same API key)."""
+    for 23 hours."""
 
     def __init__(self, api_key: str, token_file: Path):
         self.api_key = api_key
@@ -122,8 +120,7 @@ def fingerprint(cookie: str) -> str:
 
 
 def current_cookie(configured: str, session_file: Path) -> str:
-    """The renewed cookie saved after the last visit, unless a different one was configured since.
-    The file's format is shared with other tools that renew the same session."""
+    """The renewed cookie saved after the last visit, unless a different one was configured since."""
     try:
         saved = json.loads(session_file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -220,22 +217,18 @@ def main() -> int:
     args = parser.parse_args()
 
     load_env(ROOT / ".env")
-    if os.environ.get("SHARED_ENV_FILE"):  # credentials kept in another tool's .env
-        load_env(setting_path("SHARED_ENV_FILE", ROOT / ".env"))
     api_key = os.environ.get("GARMIN_PERSONAL_API_KEY")
     configured_cookie = os.environ.get("MFP_SESSION_COOKIE")
     if not api_key or not configured_cookie:
         print("Missing GARMIN_PERSONAL_API_KEY or MFP_SESSION_COOKIE (see README)", file=sys.stderr)
         return 2
-    session_file = setting_path("MFP_SESSION_FILE", ROOT / ".mfp-session.json")
-    token_file = setting_path("GARMIN_TOKEN_FILE", ROOT / ".garmin-token.json")
 
     end = date.today()
     start = end - timedelta(days=args.days - 1)
-    garmin = Garmin(api_key, token_file).weights(start, end)
+    garmin = Garmin(api_key, TOKEN_FILE).weights(start, end)
 
     try:
-        mfp = MyFitnessPal(current_cookie(configured_cookie, session_file))
+        mfp = MyFitnessPal(current_cookie(configured_cookie, SESSION_FILE))
         try:
             changes = plan(garmin, mfp.weights(start, end))
             for day, kg, old in changes:
@@ -250,7 +243,7 @@ def main() -> int:
             elif args.dry_run:
                 print("Dry run: nothing was written")
         finally:
-            save_cookie(configured_cookie, mfp.cookie(), session_file)  # keep the renewed session
+            save_cookie(configured_cookie, mfp.cookie(), SESSION_FILE)  # keep the renewed session
     except SessionExpired as e:
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
