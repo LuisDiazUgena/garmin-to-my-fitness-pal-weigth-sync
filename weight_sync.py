@@ -12,6 +12,8 @@ Weights that MyFitnessPal itself sent to Garmin Connect are ignored, so the two 
 Garmin Connect is read with the official Personal API (an API key). MyFitnessPal has no public
 API: its own web app's endpoints are used with the session cookie of a logged-in browser, which
 MyFitnessPal renews on every visit (the renewed one is saved in .mfp-session.json).
+
+When a sync fails, an email is sent if SMTP_USER, SMTP_PASSWORD and NOTIFY_TO are set.
 """
 from __future__ import annotations
 
@@ -19,9 +21,12 @@ import argparse
 import hashlib
 import json
 import os
+import smtplib
 import sys
 import time
+import traceback
 from datetime import date, datetime, timedelta
+from email.message import EmailMessage
 from pathlib import Path
 
 import requests
@@ -208,6 +213,26 @@ def plan(garmin: dict[str, float], mfp: dict[str, list[dict]]) -> list[tuple[str
     return changes
 
 
+# ─── Failure email ──────────────────────────────────────────────────────────
+
+def notify_failure(error: str) -> None:
+    """Email the error, when SMTP_USER, SMTP_PASSWORD and NOTIFY_TO are set (Gmail by default)."""
+    user, password, to = (os.environ.get(k) for k in ("SMTP_USER", "SMTP_PASSWORD", "NOTIFY_TO"))
+    if not (user and password and to):
+        return
+    msg = EmailMessage()
+    msg["Subject"] = "Garmin to MyFitnessPal weight sync failed"
+    msg["From"] = f"Weight sync <{user}>"
+    msg["To"] = to
+    msg.set_content(f"The weight sync failed on {datetime.now():%Y-%m-%d %H:%M}:\n\n{error}\n")
+    try:
+        with smtplib.SMTP_SSL(os.environ.get("SMTP_HOST", "smtp.gmail.com"), int(os.environ.get("SMTP_PORT", "465")), timeout=30) as smtp:
+            smtp.login(user, password)
+            smtp.send_message(msg)
+    except (OSError, smtplib.SMTPException) as e:
+        print(f"Could not email the error: {e}", file=sys.stderr)
+
+
 # ─── Main ───────────────────────────────────────────────────────────────────
 
 def main() -> int:
@@ -217,10 +242,22 @@ def main() -> int:
     args = parser.parse_args()
 
     load_env(ROOT / ".env")
+    try:
+        return sync(args)
+    except Exception:  # noqa: BLE001 - any failure is reported by email
+        error = traceback.format_exc()
+        print(error, file=sys.stderr)
+        notify_failure(error)
+        return 1
+
+
+def sync(args: argparse.Namespace) -> int:
     api_key = os.environ.get("GARMIN_PERSONAL_API_KEY")
     configured_cookie = os.environ.get("MFP_SESSION_COOKIE")
     if not api_key or not configured_cookie:
-        print("Missing GARMIN_PERSONAL_API_KEY or MFP_SESSION_COOKIE (see README)", file=sys.stderr)
+        error = "Missing GARMIN_PERSONAL_API_KEY or MFP_SESSION_COOKIE (see README)"
+        print(error, file=sys.stderr)
+        notify_failure(error)
         return 2
 
     end = date.today()
@@ -246,6 +283,7 @@ def main() -> int:
             save_cookie(configured_cookie, mfp.cookie(), SESSION_FILE)  # keep the renewed session
     except SessionExpired as e:
         print(f"ERROR: {e}", file=sys.stderr)
+        notify_failure(f"{e}\n\nUpdate MFP_SESSION_COOKIE in .env (see README).")
         return 1
     return 0
 

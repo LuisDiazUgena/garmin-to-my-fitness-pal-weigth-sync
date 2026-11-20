@@ -40,6 +40,8 @@ cp .env.example .env && chmod 600 .env    # then fill it in
 |---|---|
 | `GARMIN_PERSONAL_API_KEY` | Create it at [connect.garmin.com/app/settings/personalApiToken](https://connect.garmin.com/app/settings/personalApiToken). Garmin emails you before it expires. |
 | `MFP_SESSION_COOKIE` | Log in at [myfitnesspal.com](https://www.myfitnesspal.com), open the developer tools (F12) → **Network**, reload, click a request to `www.myfitnesspal.com` and copy the value of its `Cookie` request header. The `__Secure-next-auth.session-token` value alone is enough. |
+| `SMTP_USER`, `SMTP_PASSWORD`, `NOTIFY_TO` | Optional. When set, an email is sent to `NOTIFY_TO` whenever a sync fails (for example, when the MyFitnessPal session expires). Gmail is used by default, with an [app password](https://myaccount.google.com/apppasswords); for another provider, also set `SMTP_HOST` and `SMTP_PORT` (SSL). |
+
 `.env` and the files where the script keeps the renewed MyFitnessPal session (`.mfp-session.json`) and the Garmin token (`.garmin-token.json`) are in `.gitignore`: they are credentials, so never commit them.
 
 ### Every day at 10:00 (systemd)
