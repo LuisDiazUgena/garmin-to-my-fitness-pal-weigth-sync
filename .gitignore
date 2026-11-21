@@ -3,3 +3,5 @@
 .mfp-session.json
 .garmin-token.json
 __pycache__/
+takeout*
+*.zip
